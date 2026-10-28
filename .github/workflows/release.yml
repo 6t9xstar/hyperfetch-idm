@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and publish installers
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "HyperFetch ${{ github.ref_name }}"
+          releaseBody: |
+            HyperFetch ${{ github.ref_name }} is an early alpha Windows release.
+
+            Assets include the NSIS setup executable and MSI installer. The app requires the
+            WebView2 runtime, which ships with Windows 10/11. FFmpeg is optional and only used for
+            HLS remuxing.
+
+            HyperFetch is an original MIT-licensed project. It contains no IDM code, binaries,
+            artwork or branding, and it does not support DRM circumvention.
+          releaseDraft: false
+          prerelease: false
+          args: --bundles nsis,msi

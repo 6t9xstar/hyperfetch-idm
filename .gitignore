@@ -1,0 +1,30 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Node
+node_modules/
+dist/
+*.local
+
+# Tauri
+src-tauri/gen/
+src-tauri/target/
+
+# Extension builds
+extension/build/
+
+# Downloads and local data
+*.hfpart
+bridge.json
+hyperfetch.db
+hyperfetch.db-*
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

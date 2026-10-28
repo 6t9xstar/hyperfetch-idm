@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - name: Formatting
+        run: cargo fmt --all --check
+      - name: Clippy (engine, cli, fixtures)
+        run: cargo clippy -p hyperfetch-core -p hyperfetch-cli -p hyperfetch-fixture --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test -p hyperfetch-core
+      - name: Check Tauri backend
+        run: cargo check -p hyperfetch-app
+      - name: Tauri helper tests
+        run: cargo test -p hyperfetch-app --lib
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+      - name: Validate extension manifest and scripts
+        run: |
+          node -e "JSON.parse(require('fs').readFileSync('extension/manifest.json','utf8')); JSON.parse(require('fs').readFileSync('extension/manifest.firefox.json','utf8'))"
+          node --check extension/background.js
+          node --check extension/content.js
+          node --check extension/popup.js
+          node scripts/build-extension.mjs

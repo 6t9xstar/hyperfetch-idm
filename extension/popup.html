@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HyperFetch</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="brand">
+      <img src="icons/icon128.png" alt="" class="logo" />
+      <div class="brand-text">
+        <p class="name">HyperFetch</p>
+        <p class="tagline">Open-source download manager</p>
+      </div>
+      <span id="status" class="status status-offline" title="Bridge status">
+        <span class="dot"></span>
+        <span id="status-text">Checking…</span>
+      </span>
+    </header>
+
+    <main>
+      <section id="pairing" class="pairing hidden">
+        <h2>Pair with HyperFetch</h2>
+        <p class="hint">
+          In the desktop app open <strong>Settings → Browser integration</strong>, copy the bridge
+          URL and token, then paste them below.
+        </p>
+        <label for="bridge-url">Bridge URL</label>
+        <input id="bridge-url" type="text" spellcheck="false" placeholder="http://127.0.0.1:47821" />
+        <label for="bridge-token">Bridge token</label>
+        <input id="bridge-token" type="text" spellcheck="false" placeholder="Paste token" />
+        <button id="save-pairing" class="primary">Save and test connection</button>
+        <p id="pairing-error" class="error hidden"></p>
+      </section>
+
+      <section id="content" class="hidden">
+        <div class="page">
+          <p id="page-title" class="page-title">Current page</p>
+          <p id="page-url" class="page-url"></p>
+        </div>
+
+        <div class="manual">
+          <input id="manual-url" type="text" spellcheck="false" placeholder="Paste any file or .m3u8 URL" />
+          <button id="send-manual" class="primary">Send</button>
+        </div>
+
+        <div class="section-head">
+          <span>Links on this page</span>
+          <div class="section-actions">
+            <button id="rescan" class="link-button">Rescan</button>
+            <button id="send-all" class="link-button">Send all</button>
+          </div>
+        </div>
+
+        <ul id="links" class="links"></ul>
+        <p id="empty" class="empty hidden">No downloadable links found on this page.</p>
+
+        <footer>
+          <button id="edit-pairing" class="link-button">Connection settings</button>
+          <span class="version">v0.1.0 · MIT</span>
+        </footer>
+      </section>
+    </main>
+
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

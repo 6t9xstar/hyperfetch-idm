@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "HyperFetch Download Manager",
+  "version": "0.1.0",
+  "description": "Send downloads and HLS video streams from your browser to the HyperFetch desktop download manager.",
+  "permissions": ["storage", "contextMenus", "activeTab", "tabs", "cookies"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "action": {
+    "default_title": "HyperFetch",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon32.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon128.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon32.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon128.png",
+    "128": "icons/icon128.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "extension@hyperfetch.app",
+      "strict_min_version": "115.0"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

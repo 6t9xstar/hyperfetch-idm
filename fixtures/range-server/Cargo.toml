@@ -1,0 +1,18 @@
+[package]
+name = "hyperfetch-fixture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Local HTTP server for exercising the HyperFetch engine"
+
+[[bin]]
+name = "hyperfetch-fixture"
+path = "src/main.rs"
+
+[dependencies]
+axum.workspace = true
+tokio.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+futures-util.workspace = true

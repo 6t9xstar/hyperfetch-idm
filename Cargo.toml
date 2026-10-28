@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/cli",
+    "fixtures/range-server",
+    "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["HyperFetch Contributors"]
+repository = "https://github.com/6t9xstar/hyperfetch-idm"
+description = "HyperFetch - Open-Source Download Manager"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync", "time", "net", "io-util", "signal"] }
+tokio-util = "0.7"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "stream", "socks", "gzip", "brotli", "charset"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+url = "2"
+percent-encoding = "2"
+sha2 = "0.10"
+hex = "0.4"
+futures-util = "0.3"
+clap = { version = "4", features = ["derive"] }
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tempfile = "3"
+proptest = "1"
+rand = "0.8"
+parking_lot = "0.12"
+regex = "1"
