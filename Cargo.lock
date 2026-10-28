@@ -2078,7 +2078,7 @@ dependencies = [
 
 [[package]]
 name = "hyperfetch-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "hyperfetch-core",
@@ -2101,7 +2101,7 @@ dependencies = [
 
 [[package]]
 name = "hyperfetch-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "hyperfetch-core",
@@ -2114,7 +2114,7 @@ dependencies = [
 
 [[package]]
 name = "hyperfetch-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes",
  "axum",
@@ -2142,7 +2142,7 @@ dependencies = [
 
 [[package]]
 name = "hyperfetch-fixture"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "clap",

@@ -200,7 +200,7 @@ export function ClassicShell() {
           label: "About HyperFetch",
           action: () =>
             notify(
-              "HyperFetch 0.1.0 · Open-source IDM Alternative · MIT licensed · 100% Clean-Room Rust",
+              "HyperFetch 0.1.1 · Open-source IDM Alternative · MIT licensed · 100% Clean-Room Rust",
               "info",
             ),
         },
@@ -262,7 +262,7 @@ export function ClassicShell() {
             </div>
           ))}
         </div>
-        <div className="classic-menu-version">v0.1.0 · Dynamic Segmentation</div>
+        <div className="classic-menu-version">v0.1.1 · Dynamic Segmentation</div>
       </div>
 
       {/* Iconic IDM Toolbar */}

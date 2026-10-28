@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -36,14 +37,44 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "HyperFetch ${{ github.ref_name }}"
           releaseBody: |
-            HyperFetch ${{ github.ref_name }} is an early alpha Windows release.
+            ## HyperFetch ${{ github.ref_name }} — 10x Turbo IDM Alternative
 
-            Assets include the NSIS setup executable and MSI installer. The app requires the
-            WebView2 runtime, which ships with Windows 10/11. FFmpeg is optional and only used for
-            HLS remuxing.
+            HyperFetch is an ultra-fast, open-source download manager built in Rust & Tauri.
 
-            HyperFetch is an original MIT-licensed project. It contains no IDM code, binaries,
-            artwork or branding, and it does not support DRM circumvention.
+            ### What's New in this Release:
+            - **Dynamic In-Flight File Segmentation:** Rebalancing algorithm dynamically splits the largest unfinished segment in half whenever any connection becomes available, keeping all connections 100% active.
+            - **IDM Classic Explorer Layout:** Authentic two-pane interface with Categories tree (All, Compressed, Documents, Music, Programs, Video, Images), Queues tree, and Status tree.
+            - **Dynamic Segmentation Progress Dialog:** Double-click active downloads to inspect real-time multi-thread visualizer lanes and per-thread downloaded bytes.
+            - **Download Scheduler:** Set start/stop times for download queues, auto-shutdown computer on queue completion.
+            - **One-Click Browser Catching:** Manifest V3 extension with automatic download link interception and Alt-key bypass.
+            - **Headless CLI:** Scriptable standalone multi-connection downloader (`hyperfetch-cli`).
+            - **HLS Video Grabber:** Built-in AES-128 decryption and fragmented MP4 support.
           releaseDraft: false
           prerelease: false
           args: --bundles nsis,msi
+
+      - name: Build headless CLI binary
+        run: cargo build --release -p hyperfetch-cli
+
+      - name: Package CLI binary
+        shell: pwsh
+        run: |
+          Compress-Archive -Path target/release/hyperfetch.exe -DestinationPath target/release/hyperfetch-cli-windows-x64.zip -Force
+
+      - name: Package browser extensions
+        shell: pwsh
+        run: |
+          npm run extension:build
+          Compress-Archive -Path extension/build/chrome/* -DestinationPath extension/build/hyperfetch-extension-chrome.zip -Force
+          Compress-Archive -Path extension/build/firefox/* -DestinationPath extension/build/hyperfetch-extension-firefox.zip -Force
+
+      - name: Upload additional assets to release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            target/release/hyperfetch-cli-windows-x64.zip
+            extension/build/hyperfetch-extension-chrome.zip
+            extension/build/hyperfetch-extension-firefox.zip

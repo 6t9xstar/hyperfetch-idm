@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "HyperFetch Download Manager",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Send downloads and HLS video streams from your browser to the HyperFetch desktop download manager.",
   "permissions": ["storage", "contextMenus", "activeTab", "tabs", "cookies", "downloads"],
   "host_permissions": ["<all_urls>"],
