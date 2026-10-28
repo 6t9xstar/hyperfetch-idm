@@ -11,6 +11,7 @@ import type {
   EngineEvent,
   EngineStats,
   ProbeResult,
+  RangeInfo,
   Settings,
 } from "./types";
 
@@ -20,6 +21,7 @@ export const api = {
   add: (spec: DownloadSpec) => invoke<DownloadSnapshot>("add_download", { spec }),
   list: () => invoke<DownloadSnapshot[]>("list_downloads"),
   get: (id: string) => invoke<DownloadSnapshot>("get_download", { id }),
+  getRanges: (id: string) => invoke<RangeInfo[]>("get_download_ranges", { id }),
   pause: (id: string) => invoke<void>("pause_download", { id }),
   resume: (id: string) => invoke<void>("resume_download", { id }),
   cancel: (id: string) => invoke<void>("cancel_download", { id }),

@@ -196,6 +196,53 @@ impl RangePlan {
         true
     }
 
+    /// IDM-style dynamic segmentation: When a worker is free and all existing
+    /// ranges are in-flight, split the unreserved tail of the largest in-flight range.
+    /// This prevents tail-latency stragglers and ensures all connections remain 100% busy.
+    fn maybe_split_in_flight(&mut self) -> bool {
+        let incomplete = self
+            .ranges
+            .iter()
+            .filter(|range| !range.is_complete())
+            .count();
+        if incomplete as u64 >= self.target_workers as u64 {
+            return false;
+        }
+
+        let candidate = self
+            .ranges
+            .iter()
+            .enumerate()
+            .filter(|(index, range)| self.in_flight.contains(index) && !range.is_complete())
+            .filter_map(|(index, range)| {
+                let reserved_end = range.pos.saturating_add(self.batch_size).min(range.end);
+                let unreserved = range.end.saturating_sub(reserved_end);
+                if unreserved >= self.min_split_size.saturating_mul(2) {
+                    Some((index, *range, reserved_end, unreserved))
+                } else {
+                    None
+                }
+            })
+            .max_by_key(|(_, _, _, unreserved)| *unreserved);
+
+        let Some((index, range, reserved_end, unreserved)) = candidate else {
+            return false;
+        };
+
+        let midpoint = reserved_end + unreserved / 2;
+        if midpoint <= reserved_end || midpoint >= range.end {
+            return false;
+        }
+
+        self.ranges[index].end = midpoint;
+        self.ranges.push(ByteRange {
+            start: midpoint,
+            end: range.end,
+            pos: midpoint,
+        });
+        true
+    }
+
     /// Reserve a batch from the largest idle unfinished range.
     pub fn acquire(&mut self) -> Option<BatchJob> {
         if !self.has_work() {
@@ -204,13 +251,23 @@ impl RangePlan {
 
         self.maybe_split();
 
-        let candidate = self
+        let mut candidate = self
             .ranges
             .iter()
             .enumerate()
             .filter(|(index, range)| !self.in_flight.contains(index) && !range.is_complete())
             .max_by_key(|(_, range)| range.remaining())
             .map(|(index, range)| (index, *range));
+
+        if candidate.is_none() && self.maybe_split_in_flight() {
+            candidate = self
+                .ranges
+                .iter()
+                .enumerate()
+                .filter(|(index, range)| !self.in_flight.contains(index) && !range.is_complete())
+                .max_by_key(|(_, range)| range.remaining())
+                .map(|(index, range)| (index, *range));
+        }
 
         let (index, range) = candidate?;
         let batch_end = range.pos.saturating_add(self.batch_size).min(range.end);
@@ -310,6 +367,41 @@ mod tests {
     fn small_file_uses_single_range() {
         let plan = RangePlan::new(3 << 20, 8, 1 << 20, 2 << 20);
         assert_eq!(plan.ranges.len(), 1);
+    }
+
+    #[test]
+    fn dynamic_segmentation_splits_in_flight_range_when_worker_is_available() {
+        // 100 MB file, target 4 workers, batch 1 MB, min split 2 MB
+        let mut plan = RangePlan::new(100 << 20, 4, 1 << 20, 2 << 20);
+        assert_eq!(plan.ranges.len(), 4);
+
+        // Workers 0, 1, 2, 3 acquire batches for each range
+        let job0 = plan.acquire().expect("job0");
+        let job1 = plan.acquire().expect("job1");
+        let job2 = plan.acquire().expect("job2");
+        let job3 = plan.acquire().expect("job3");
+
+        // Now all 4 ranges are in-flight!
+        assert_eq!(plan.in_flight.len(), 4);
+
+        // Worker 0 finishes and commits its entire piece (simulate completing early)
+        plan.commit(job0, true);
+        plan.ranges[job0.index].pos = plan.ranges[job0.index].end; // range 0 is now 100% complete
+
+        // Worker 0 asks for more work. All other ranges (1, 2, 3) are in flight!
+        // With dynamic segmentation, it splits an in-flight range and gets a new job!
+        let new_job = plan.acquire().expect("should dynamically acquire work from in-flight range");
+        assert_eq!(plan.ranges.len(), 5); // A 5th range was dynamically created!
+        assert!(new_job.start < new_job.end);
+
+        // Finish everything
+        plan.commit(new_job, true);
+        plan.commit(job1, true);
+        plan.commit(job2, true);
+        plan.commit(job3, true);
+
+        let _intervals = drain(&mut plan);
+        assert!(plan.is_complete());
     }
 
     #[test]

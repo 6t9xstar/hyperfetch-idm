@@ -18,9 +18,11 @@ import {
   CategoryIcon,
   DownloadIcon,
   ExternalIcon,
+  InfoIcon,
   PauseIcon,
   PlayIcon,
   PlusIcon,
+  PulseIcon,
   SearchIcon,
   TrashIcon,
   XIcon,
@@ -43,6 +45,8 @@ function DownloadRow({ download }: { download: DownloadSnapshot }) {
   const cancel = useStore((state) => state.cancel);
   const remove = useStore((state) => state.remove);
   const notify = useStore((state) => state.notify);
+  const openProgressDialog = useStore((state) => state.openProgressDialog);
+  const openProperties = useStore((state) => state.openProperties);
 
   const category = categoryOfFilename(download.filename);
   const active = isActive(download.state);
@@ -69,6 +73,8 @@ function DownloadRow({ download }: { download: DownloadSnapshot }) {
           void api.openPath(`${download.dir}/${download.filename}`).catch((error) =>
             notify(String(error), "error"),
           );
+        } else {
+          openProgressDialog(download.id);
         }
       }}
     >
@@ -145,6 +151,26 @@ function DownloadRow({ download }: { download: DownloadSnapshot }) {
       </div>
 
       <div className="flex items-center justify-end gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
+        <button
+          className="icon-btn hover:text-emerald-400"
+          title="Download Status & Dynamic Segments"
+          onClick={(e) => {
+            e.stopPropagation();
+            openProgressDialog(download.id);
+          }}
+        >
+          <PulseIcon className="h-4 w-4" />
+        </button>
+        <button
+          className="icon-btn hover:text-blue-400"
+          title="File Properties & Checksum"
+          onClick={(e) => {
+            e.stopPropagation();
+            openProperties(download);
+          }}
+        >
+          <InfoIcon className="h-4 w-4" />
+        </button>
         {active || queued ? (
           <button
             className="icon-btn"

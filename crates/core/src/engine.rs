@@ -26,7 +26,7 @@ use crate::util::{
 };
 
 const MONITOR_INTERVAL: Duration = Duration::from_millis(500);
-const WRITE_BUFFER: usize = 512 * 1024;
+const WRITE_BUFFER: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -83,6 +83,7 @@ struct Runtime {
     reason: Mutex<Option<StopReason>>,
     active: AtomicBool,
     generation: AtomicU64,
+    plan: Mutex<Option<Arc<Mutex<RangePlan>>>>,
 }
 
 struct Progress {
@@ -105,6 +106,7 @@ impl Runtime {
             reason: Mutex::new(None),
             active: AtomicBool::new(false),
             generation: AtomicU64::new(0),
+            plan: Mutex::new(None),
         }
     }
 
@@ -142,6 +144,7 @@ impl Runtime {
             self.active.store(false, Ordering::SeqCst);
             self.progress.speed.store(0, Ordering::SeqCst);
             self.progress.active_connections.store(0, Ordering::SeqCst);
+            *self.plan.lock() = None;
         }
     }
 }
@@ -370,6 +373,23 @@ impl Engine {
     pub async fn get(&self, id: Uuid) -> Result<DownloadSnapshot> {
         let record = self.inner.db.get_download(id)?.ok_or(Error::NotFound)?;
         Ok(build_snapshot(&self.inner, &record))
+    }
+
+    pub async fn get_ranges(&self, id: Uuid) -> Result<Vec<RangeInfo>> {
+        if let Some(runtime) = self.runtime_for(id) {
+            if let Some(plan) = runtime.plan.lock().as_ref() {
+                let snapshot = plan.lock().snapshot();
+                return Ok(snapshot
+                    .into_iter()
+                    .map(|(start, end, pos)| RangeInfo { start, end, pos })
+                    .collect());
+            }
+        }
+        let rows = self.inner.db.load_ranges(id)?;
+        Ok(rows
+            .into_iter()
+            .map(|(start, end, pos)| RangeInfo { start, end, pos })
+            .collect())
     }
 
     pub async fn list(&self) -> Result<Vec<DownloadSnapshot>> {
@@ -834,6 +854,7 @@ impl Engine {
         }
 
         let plan = Arc::new(Mutex::new(plan));
+        *runtime.plan.lock() = Some(plan.clone());
         let notify = Arc::new(Notify::new());
         let fatal = Arc::new(AtomicBool::new(false));
         let range_unsupported = Arc::new(AtomicBool::new(false));
@@ -1145,7 +1166,8 @@ impl Engine {
         let mut builder = Client::builder()
             .connect_timeout(Duration::from_secs(20))
             .redirect(reqwest::redirect::Policy::limited(10))
-            .pool_max_idle_per_host(32)
+            .pool_max_idle_per_host(64)
+            .pool_idle_timeout(Duration::from_secs(90))
             .tcp_nodelay(true);
 
         if let Some(proxy_url) = &key {

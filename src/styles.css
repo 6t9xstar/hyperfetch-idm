@@ -326,6 +326,92 @@ html[data-theme="classic"] body {
   outline: none;
 }
 
+/* Classic IDM Explorer Split Layout */
+.classic-workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #f0ede4;
+  border-top: 1px solid #9c9a8e;
+}
+
+.classic-tree-pane {
+  width: 215px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  border-right: 1px solid #9c9a8e;
+  background: #fdfcf9;
+  padding: 4px;
+}
+
+.classic-tree-section {
+  margin-bottom: 8px;
+}
+
+.classic-tree-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  font-weight: 700;
+  font-size: 11px;
+  color: #3b3a33;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: #eae7db;
+  border: 1px solid #d4d1c5;
+  border-radius: 2px;
+  margin-bottom: 2px;
+}
+
+.classic-tree-node {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #222;
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.classic-tree-node:hover {
+  background: #eef3fb;
+  border-color: #c7d8ed;
+}
+
+.classic-tree-node.is-active {
+  background: #0a5fbf;
+  color: #fff;
+  font-weight: 600;
+}
+
+.classic-tree-node.is-active .classic-tree-badge {
+  color: #cbe2ff;
+}
+
+.classic-tree-badge {
+  margin-left: auto;
+  font-size: 10px;
+  color: #777;
+}
+
+.classic-main-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
 .classic-tabs {
   display: flex;
   align-items: flex-end;

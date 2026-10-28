@@ -238,6 +238,43 @@ api.contextMenus.onClicked.addListener(async (info) => {
   }
 });
 
+// Automatic one-click browser download interception (IDM mode)
+if (api.downloads && api.downloads.onCreated) {
+  const recentlyIntercepted = new Set();
+  api.downloads.onCreated.addListener(async (item) => {
+    try {
+      const config = await getConfig();
+      if (!config.token || config.interceptDownloads === false) return;
+      const url = item.finalUrl || item.url;
+      if (!url || !/^https?:/i.test(url)) return;
+      if (url.includes("127.0.0.1") || url.includes("localhost")) return;
+
+      if (recentlyIntercepted.has(url)) return;
+      recentlyIntercepted.add(url);
+      setTimeout(() => recentlyIntercepted.delete(url), 10000);
+
+      // Cancel the native browser download and hand over to HyperFetch
+      if (typeof api.downloads.cancel === "function") {
+        api.downloads.cancel(item.id, () => {
+          if (api.downloads.erase) api.downloads.erase({ id: item.id }, () => {});
+        });
+      }
+
+      const filename = item.filename ? item.filename.split(/[\\/]/).pop() : filenameFor(url);
+      await sendCapture({
+        url,
+        filename,
+        referer: item.referrer || null,
+        pageUrl: item.referrer || null,
+        kind: kindFor(url),
+      });
+      flash("✓");
+    } catch (error) {
+      console.warn("HyperFetch browser download interception error:", error);
+    }
+  });
+}
+
 async function testBridge(config) {
   const bridgeUrl = (config?.bridgeUrl || (await getConfig()).bridgeUrl).replace(/\/+$/, "");
   let health;

@@ -5,6 +5,13 @@ use uuid::Uuid;
 
 pub type DownloadId = Uuid;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RangeInfo {
+    pub start: u64,
+    pub end: u64,
+    pub pos: u64,
+}
+
 /// Lifecycle of a download.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

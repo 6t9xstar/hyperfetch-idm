@@ -188,6 +188,55 @@ export const ChevronDownIcon = (props: IconProps) => (
   </Base>
 );
 
+export const ChevronRightIcon = (props: IconProps) => (
+  <Base {...props}>
+    <path d="m9 18 6-6-6-6" />
+  </Base>
+);
+
+export const ClockIcon = (props: IconProps) => (
+  <Base {...props}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3 3" />
+  </Base>
+);
+
+export const QueueIcon = (props: IconProps) => (
+  <Base {...props}>
+    <path d="M4 6h16M4 12h16M4 18h16" />
+  </Base>
+);
+
+export const StopAllIcon = (props: IconProps) => (
+  <Base {...props}>
+    <rect x="4" y="5" width="4" height="14" rx="1" fill="currentColor" />
+    <rect x="11" y="5" width="4" height="14" rx="1" fill="currentColor" />
+    <rect x="18" y="5" width="2" height="14" rx="0.5" fill="currentColor" />
+  </Base>
+);
+
+export const InfoIcon = (props: IconProps) => (
+  <Base {...props}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 8h.01M11 12h1v4h1" />
+  </Base>
+);
+
+export const SpeedometerIcon = (props: IconProps) => (
+  <Base {...props}>
+    <path d="M12 4a9 9 0 0 0-9 9c0 2.8 1.3 5.3 3.3 7h11.4c2-1.7 3.3-4.2 3.3-7a9 9 0 0 0-9-9Z" />
+    <path d="m12 13 4-4" />
+    <circle cx="12" cy="13" r="1.5" />
+  </Base>
+);
+
+export const DeleteCompIcon = (props: IconProps) => (
+  <Base {...props}>
+    <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12" />
+    <path d="m9 12 2 2 4-4" />
+  </Base>
+);
+
 export const ExternalIcon = (props: IconProps) => (
   <Base {...props}>
     <path d="M14 4h6v6M20 4 11 13M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />

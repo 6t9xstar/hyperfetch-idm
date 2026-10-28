@@ -56,6 +56,14 @@ interface Store {
   settingsOpen: boolean;
   grabberOpen: boolean;
   capturesOpen: boolean;
+  progressDialogId: string | null;
+  schedulerOpen: boolean;
+  propertiesDownload: DownloadSnapshot | null;
+  openProgressDialog: (id: string) => void;
+  closeProgressDialog: () => void;
+  setSchedulerOpen: (open: boolean) => void;
+  openProperties: (download: DownloadSnapshot) => void;
+  closeProperties: () => void;
   init: () => Promise<void>;
   refresh: () => Promise<void>;
   refreshCaptures: () => Promise<void>;
@@ -152,6 +160,15 @@ export const useStore = create<Store>()((set, get) => ({
   settingsOpen: false,
   grabberOpen: false,
   capturesOpen: false,
+  progressDialogId: null,
+  schedulerOpen: false,
+  propertiesDownload: null,
+
+  openProgressDialog: (id) => set({ progressDialogId: id }),
+  closeProgressDialog: () => set({ progressDialogId: null }),
+  setSchedulerOpen: (open) => set({ schedulerOpen: open }),
+  openProperties: (download) => set({ propertiesDownload: download }),
+  closeProperties: () => set({ propertiesDownload: null }),
 
   init: async () => {
     if (started) return;

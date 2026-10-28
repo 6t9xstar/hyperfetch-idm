@@ -124,6 +124,18 @@ async fn get_download(state: State<'_, AppState>, id: String) -> Result<Download
 }
 
 #[tauri::command]
+async fn get_download_ranges(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Vec<hyperfetch_core::RangeInfo>, String> {
+    state
+        .engine
+        .get_ranges(parse_id(&id)?)
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
 async fn pause_download(state: State<'_, AppState>, id: String) -> Result<(), String> {
     state.engine.pause(parse_id(&id)?).await.map_err(to_error)
 }
@@ -886,6 +898,7 @@ pub fn run() {
             add_download,
             list_downloads,
             get_download,
+            get_download_ranges,
             pause_download,
             resume_download,
             cancel_download,

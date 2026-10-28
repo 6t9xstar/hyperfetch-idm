@@ -59,6 +59,15 @@
 
   const STREAM_EXTENSIONS = new Set(["m3u8", "mpd"]);
 
+  const DOWNLOAD_CLICK_EXTENSIONS = new Set([
+    "zip", "rar", "7z", "tar", "gz", "bz2", "xz", "zst", "iso",
+    "pdf", "epub", "mobi", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+    "exe", "msi", "msix", "appx", "apk", "dmg", "pkg", "deb", "rpm",
+    "mp4", "mkv", "webm", "mov", "avi", "flv", "m4v", "wmv",
+    "mp3", "m4a", "aac", "flac", "wav", "ogg", "opus", "wma",
+    "m3u8", "mpd",
+  ]);
+
   function extensionOf(url) {
     try {
       const parsed = new URL(url, location.href);
@@ -168,4 +177,62 @@
     }
     return undefined;
   });
+
+  function showFloatingToast(filename) {
+    try {
+      let toast = document.getElementById("__hyperfetch_toast");
+      if (!toast) {
+        toast = document.createElement("div");
+        toast.id = "__hyperfetch_toast";
+        toast.style.cssText =
+          "position:fixed;top:16px;right:16px;z-index:2147483647;background:#0d1527;color:#38bdf8;padding:10px 16px;border-radius:8px;font-family:system-ui,-apple-system,sans-serif;font-size:12px;font-weight:600;box-shadow:0 10px 25px rgba(0,0,0,0.5);border:1px solid #1e293b;pointer-events:none;transition:all 0.3s ease;display:flex;align-items:center;gap:8px;";
+        document.body.appendChild(toast);
+      }
+      toast.innerHTML = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;"></span> Captured by HyperFetch: <span style="color:#f1f5f9;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${filename || "File"}</span>`;
+      toast.style.opacity = "1";
+      toast.style.transform = "translateY(0)";
+      clearTimeout(toast.__timer);
+      toast.__timer = setTimeout(() => {
+        toast.style.opacity = "0";
+        toast.style.transform = "translateY(-10px)";
+      }, 3500);
+    } catch {
+      /* ignore DOM errors */
+    }
+  }
+
+  document.addEventListener("click", (event) => {
+    if (event.altKey) {
+      // Holding Alt key bypasses download manager, matching IDM standard
+      return;
+    }
+    const target = event.target;
+    const link = target.closest && target.closest("a[href]");
+    if (!link) return;
+    const href = link.href;
+    if (!href || href.startsWith("blob:") || href.startsWith("data:") || href.startsWith("javascript:")) return;
+    const ext = extensionOf(href);
+    if (!ext) return;
+
+    if (DOWNLOAD_CLICK_EXTENSIONS.has(ext)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const fname = filenameFor(href) || `download.${ext}`;
+      showFloatingToast(fname);
+      try {
+        runtime.sendMessage({
+          type: "hf-capture",
+          payload: {
+            url: href,
+            filename: fname,
+            referer: location.href,
+            pageUrl: location.href,
+            kind: kindFor(href),
+          },
+        });
+      } catch (err) {
+        console.warn("HyperFetch message send failed:", err);
+      }
+    }
+  }, true);
 })();

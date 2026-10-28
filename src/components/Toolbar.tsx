@@ -1,6 +1,6 @@
 import { matchesFilter, useStore } from "../store";
 import type { Filter } from "../lib/types";
-import { FilmIcon, PauseIcon, PlayIcon, PlusIcon, RefreshIcon, SearchIcon } from "./Icons";
+import { ClockIcon, FilmIcon, PauseIcon, PlayIcon, PlusIcon, RefreshIcon, SearchIcon } from "./Icons";
 
 const TITLES: Record<Filter, string> = {
   all: "All downloads",
@@ -25,6 +25,7 @@ export function Toolbar() {
   const setSearch = useStore((state) => state.setSearch);
   const openAdd = useStore((state) => state.openAdd);
   const setGrabberOpen = useStore((state) => state.setGrabberOpen);
+  const setSchedulerOpen = useStore((state) => state.setSchedulerOpen);
   const pauseAll = useStore((state) => state.pauseAll);
   const resumeAll = useStore((state) => state.resumeAll);
   const refresh = useStore((state) => state.refresh);
@@ -60,6 +61,13 @@ export function Toolbar() {
         </button>
         <button className="icon-btn" onClick={() => void resumeAll()} title="Resume all">
           <PlayIcon className="h-4 w-4" />
+        </button>
+        <button
+          className="icon-btn"
+          onClick={() => setSchedulerOpen(true)}
+          title="Scheduler and queues"
+        >
+          <ClockIcon className="h-4 w-4 text-amber-400" />
         </button>
         <button
           className="btn h-9 px-2.5"

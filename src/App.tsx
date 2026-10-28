@@ -8,6 +8,9 @@ import { AddDownloadDialog } from "./components/AddDownloadDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { CapturesDialog } from "./components/CapturesDialog";
 import { GrabberDialog } from "./components/GrabberDialog";
+import { DownloadProgressDialog } from "./components/DownloadProgressDialog";
+import { SchedulerDialog } from "./components/SchedulerDialog";
+import { PropertiesDialog } from "./components/PropertiesDialog";
 import { Toasts } from "./components/Toasts";
 import { ClassicShell } from "./components/classic/ClassicShell";
 import { Logo } from "./components/Icons";
@@ -78,6 +81,9 @@ export default function App() {
       <SettingsDialog />
       <CapturesDialog />
       <GrabberDialog />
+      <DownloadProgressDialog />
+      <SchedulerDialog />
+      <PropertiesDialog />
       <Toasts />
     </div>
   );

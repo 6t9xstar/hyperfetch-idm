@@ -17,5 +17,6 @@ pub use engine::{Engine, EngineEvent, EngineStats};
 pub use error::{Error, Result};
 pub use probe::{probe_url, ProbeResult};
 pub use types::{
-    Category, DownloadId, DownloadSnapshot, DownloadSpec, DownloadState, ProgressEvent, Settings,
+    Category, DownloadId, DownloadSnapshot, DownloadSpec, DownloadState, ProgressEvent, RangeInfo,
+    Settings,
 };

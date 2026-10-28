@@ -41,6 +41,12 @@ export interface ProgressEvent {
   active_connections: number;
 }
 
+export interface RangeInfo {
+  start: number;
+  end: number;
+  pos: number;
+}
+
 export type EngineEvent =
   | { type: "added"; download: DownloadSnapshot }
   | { type: "updated"; download: DownloadSnapshot }
