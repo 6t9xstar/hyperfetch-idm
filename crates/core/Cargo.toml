@@ -25,6 +25,11 @@ parking_lot.workspace = true
 regex.workspace = true
 aes = "0.8"
 cbc = "0.1"
+hyperfetch-native = { path = "../native", optional = true }
+
+[features]
+default = []
+native-accel = ["dep:hyperfetch-native"]
 
 [dev-dependencies]
 tempfile.workspace = true

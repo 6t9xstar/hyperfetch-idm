@@ -302,79 +302,78 @@ pub async fn download_hls(
         .await?;
 
     let window = connections.max(1);
-    let segments = playlist.segments.clone();
+    let keys = Arc::new(keys);
     let sequence = playlist.media_sequence;
+    let segments = playlist.segments.clone();
 
-    for (batch_index, batch) in segments.chunks(window).enumerate() {
-        let mut futures = Vec::with_capacity(batch.len());
-        for (index_in_batch, segment) in batch.iter().enumerate() {
-            let absolute_index = batch_index as u64 * window as u64 + index_in_batch as u64;
-            let url = playlist_url.join(&segment.uri)?;
-            let client = client.clone();
-            let key = segment.key.clone();
-            let keys = keys.clone();
-            let map_uri = segment.map.as_ref().map(|map| map.uri.clone());
+    let mut futures = Vec::with_capacity(segments.len());
+    for (index, segment) in segments.iter().enumerate() {
+        let url = playlist_url.join(&segment.uri)?;
+        let client = client.clone();
+        let key = segment.key.clone();
+        let keys = Arc::clone(&keys);
+        let map_uri = segment.map.as_ref().map(|map| map.uri.clone());
+        let absolute_index = index as u64;
 
-            futures.push(async move {
-                let response = client.get(url.clone()).send().await?;
-                if !response.status().is_success() {
-                    return Err(Error::failed(format!(
-                        "segment request failed with HTTP {}",
-                        response.status()
-                    )));
-                }
-                let bytes = response.bytes().await?;
-                let data = match key {
-                    Some(key) if key.method.eq_ignore_ascii_case("AES-128") => {
-                        let uri = key
-                            .uri
-                            .as_ref()
-                            .ok_or_else(|| Error::failed("missing key URI"))?;
-                        let key_bytes = keys
-                            .get(uri)
-                            .ok_or_else(|| Error::failed("missing HLS key"))?;
-                        let iv = match key.iv.as_ref() {
-                            Some(iv) if iv.len() == 16 => {
-                                let mut value = [0u8; 16];
-                                value.copy_from_slice(iv);
-                                value
-                            }
-                            _ => {
-                                let mut value = [0u8; 16];
-                                let number = sequence + absolute_index;
-                                value[8..].copy_from_slice(&number.to_be_bytes());
-                                value
-                            }
-                        };
-                        decrypt_segment(&bytes, key_bytes, &iv)?
-                    }
-                    _ => bytes.to_vec(),
-                };
-                Ok::<(Vec<u8>, Option<String>), Error>((data, map_uri))
-            });
-        }
-
-        let mut stream = futures_util::stream::iter(futures).buffered(window);
-        while let Some(result) = stream.next().await {
-            let (data, map_uri) = result?;
-            if let Some(uri) = &map_uri {
-                if last_map.as_deref() != Some(uri.as_str()) {
-                    let init = maps
+        futures.push(async move {
+            let response = client.get(url.clone()).send().await?;
+            if !response.status().is_success() {
+                return Err(Error::failed(format!(
+                    "segment request failed with HTTP {}",
+                    response.status()
+                )));
+            }
+            let bytes = response.bytes().await?;
+            let data = match key {
+                Some(key) if key.method.eq_ignore_ascii_case("AES-128") => {
+                    let uri = key
+                        .uri
+                        .as_ref()
+                        .ok_or_else(|| Error::failed("missing key URI"))?;
+                    let key_bytes = keys
                         .get(uri)
-                        .ok_or_else(|| Error::failed("missing HLS init section"))?;
-                    file.write_all(init).await?;
-                    written += init.len() as u64;
-                    last_map = Some(uri.clone());
+                        .ok_or_else(|| Error::failed("missing HLS key"))?;
+                    let iv = match key.iv.as_ref() {
+                        Some(iv) if iv.len() == 16 => {
+                            let mut value = [0u8; 16];
+                            value.copy_from_slice(iv);
+                            value
+                        }
+                        _ => {
+                            let mut value = [0u8; 16];
+                            let number = sequence + absolute_index;
+                            value[8..].copy_from_slice(&number.to_be_bytes());
+                            value
+                        }
+                    };
+                    decrypt_segment(&bytes, key_bytes, &iv)?
                 }
-            } else {
-                last_map = None;
+                _ => bytes.to_vec(),
+            };
+            Ok::<(Vec<u8>, Option<String>), Error>((data, map_uri))
+        });
+    }
+
+    let mut stream = futures_util::stream::iter(futures).buffered(window);
+    while let Some(result) = stream.next().await {
+        let (data, map_uri) = result?;
+        if let Some(uri) = &map_uri {
+            if last_map.as_deref() != Some(uri.as_str()) {
+                let init = maps
+                    .get(uri)
+                    .ok_or_else(|| Error::failed("missing HLS init section"))?;
+                file.write_all(init).await?;
+                written += init.len() as u64;
+                last_map = Some(uri.clone());
             }
-            file.write_all(&data).await?;
-            written += data.len() as u64;
-            completed += 1;
-            if let Some(callback) = &progress {
-                callback(completed, total_segments, written);
-            }
+        } else {
+            last_map = None;
+        }
+        file.write_all(&data).await?;
+        written += data.len() as u64;
+        completed += 1;
+        if let Some(callback) = &progress {
+            callback(completed, total_segments, written);
         }
     }
 
@@ -391,6 +390,18 @@ pub async fn download_hls(
 fn decrypt_segment(data: &[u8], key: &[u8], iv: &[u8; 16]) -> Result<Vec<u8>> {
     if data.is_empty() {
         return Ok(Vec::new());
+    }
+    #[cfg(feature = "native-accel")]
+    {
+        if key.len() == 16 {
+            if let Some(decrypted) = hyperfetch_native::decrypt_aes128_cbc_padded(
+                key.try_into().expect("checked 16-byte key"),
+                iv,
+                data,
+            ) {
+                return Ok(decrypted);
+            }
+        }
     }
     let mut buffer = data.to_vec();
     let decrypted = Aes128CbcDec::new_from_slices(key, iv)
@@ -428,6 +439,7 @@ pub fn looks_like_dash(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn parses_master_playlist() {
@@ -519,5 +531,37 @@ segment1.m4s
     #[test]
     fn rejects_non_hls() {
         assert!(HlsPlaylist::parse("<html></html>").is_err());
+    }
+
+    proptest! {
+        #[test]
+        fn parsing_arbitrary_input_never_panics(
+            prefix_len in 0u8..8,
+            body in proptest::string::string_regex(".{0,4096}").unwrap(),
+        ) {
+            let header = "#EXTM3U\n".repeat(prefix_len.max(1) as usize);
+            let content = format!("{header}{body}");
+            let parsed = HlsPlaylist::parse(&content);
+            let _ = parsed.map(|playlist| {
+                let _ = playlist.best_variant();
+            });
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn attribute_and_iv_parsing_never_panic(
+            input in proptest::string::string_regex("[A-Za-z0-9=\"x0-9,]{0,256}").unwrap(),
+        ) {
+            let attributes = parse_attributes(&input);
+            for key in attributes.keys() {
+                let _ = attributes.get(key);
+            }
+            for (key, value) in &attributes {
+                if key == "IV" {
+                    let _ = parse_iv(value);
+                }
+            }
+        }
     }
 }

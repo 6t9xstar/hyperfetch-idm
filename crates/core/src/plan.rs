@@ -390,7 +390,9 @@ mod tests {
 
         // Worker 0 asks for more work. All other ranges (1, 2, 3) are in flight!
         // With dynamic segmentation, it splits an in-flight range and gets a new job!
-        let new_job = plan.acquire().expect("should dynamically acquire work from in-flight range");
+        let new_job = plan
+            .acquire()
+            .expect("should dynamically acquire work from in-flight range");
         assert_eq!(plan.ranges.len(), 5); // A 5th range was dynamically created!
         assert!(new_job.start < new_job.end);
 

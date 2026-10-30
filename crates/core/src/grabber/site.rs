@@ -4,11 +4,23 @@
 //! optionally honour `robots.txt` through the caller's policy.
 
 use std::collections::{HashSet, VecDeque};
+use std::sync::OnceLock;
 
+use futures_util::StreamExt;
 use regex::Regex;
 use url::Url;
 
 use crate::error::{Error, Result};
+
+/// How many page fetches may be in flight at once during a crawl wave.
+const CRAWL_CONCURRENCY: usize = 8;
+
+fn link_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(r#"(?i)(?:href|src)\s*=\s*["']([^"'#]+)["']"#).expect("valid regex")
+    })
+}
 
 #[derive(Debug, Clone)]
 pub struct CrawlOptions {
@@ -40,7 +52,7 @@ pub struct DiscoveredLink {
 
 /// Extract `href` and `src` targets from an HTML document.
 pub fn extract_links(base: &Url, html: &str) -> Vec<Url> {
-    let pattern = Regex::new(r#"(?i)(?:href|src)\s*=\s*["']([^"'#]+)["']"#).expect("valid regex");
+    let pattern = link_pattern();
     let mut seen = HashSet::new();
     let mut links = Vec::new();
 
@@ -72,16 +84,16 @@ pub fn is_probable_file(url: &Url) -> bool {
         && !matches!(extension, "html" | "htm" | "php" | "asp" | "aspx" | "jsp")
 }
 
-/// Walk a site breadth-first. The callback receives links as they are found and
-/// returns the HTML for pages it wants to have crawled (return `None` to stop
-/// that branch).
+/// Walk a site breadth-first in bounded-parallel waves. The callback receives
+/// links as they are found and returns the HTML for pages it wants to have
+/// crawled (return `None` to skip that branch).
 pub async fn crawl<F, Fut>(
     start: Url,
     options: CrawlOptions,
-    mut fetch: F,
+    fetch: F,
 ) -> Result<Vec<DiscoveredLink>>
 where
-    F: FnMut(Url) -> Fut,
+    F: Fn(Url) -> Fut,
     Fut: std::future::Future<Output = Result<Option<String>>>,
 {
     if !matches!(start.scheme(), "http" | "https") {
@@ -89,59 +101,90 @@ where
     }
 
     let host = start.host_str().map(str::to_string);
-    let mut queue = VecDeque::from([(start.clone(), 0u32)]);
+    let mut wave = VecDeque::from([(start.clone(), 0u32)]);
     let mut visited: HashSet<String> = HashSet::new();
     let mut discovered = Vec::new();
 
-    while let Some((url, depth)) = queue.pop_front() {
-        if visited.len() >= options.max_pages {
+    loop {
+        if visited.len() >= options.max_pages || wave.is_empty() {
             break;
         }
-        if !visited.insert(url.to_string()) {
-            continue;
-        }
-        if options.same_host_only && url.host_str() != host.as_deref() {
-            continue;
-        }
-        if is_probable_file(&url) {
-            discovered.push(DiscoveredLink {
-                url: url.to_string(),
-                depth,
-                is_file: true,
-            });
-            continue;
-        }
-        if depth >= options.max_depth {
-            continue;
-        }
 
-        let html = match fetch(url.clone()).await? {
-            Some(html) => html,
-            None => continue,
-        };
-
-        for link in extract_links(&url, &html) {
-            if options.same_host_only && link.host_str() != host.as_deref() {
+        let mut jobs = Vec::new();
+        while let Some((url, depth)) = wave.pop_front() {
+            if visited.len() >= options.max_pages {
+                break;
+            }
+            if !visited.insert(url.to_string()) {
                 continue;
             }
-            if is_probable_file(&link) {
+            if options.same_host_only && url.host_str() != host.as_deref() {
+                continue;
+            }
+            if is_probable_file(&url) {
                 discovered.push(DiscoveredLink {
-                    url: link.to_string(),
-                    depth: depth + 1,
+                    url: url.to_string(),
+                    depth,
                     is_file: true,
                 });
                 continue;
             }
-            queue.push_back((link, depth + 1));
+            if depth >= options.max_depth {
+                continue;
+            }
+            jobs.push((url, depth));
         }
-    }
+        if jobs.is_empty() {
+            break;
+        }
 
+        let fetch = &fetch;
+        let mut stream = futures_util::stream::iter(jobs)
+            .map(move |(url, depth)| {
+                let fetch = fetch;
+                async move {
+                    let html = fetch(url.clone()).await?;
+                    Ok::<_, crate::error::Error>((url, depth, html))
+                }
+            })
+            .buffered(CRAWL_CONCURRENCY);
+
+        let mut next_wave: Vec<(Url, u32)> = Vec::new();
+        let mut queued: HashSet<String> = HashSet::new();
+
+        while let Some(result) = stream.next().await {
+            let (url, depth, html) = result?;
+            let Some(html) = html else {
+                continue;
+            };
+            for link in extract_links(&url, &html) {
+                if options.same_host_only && link.host_str() != host.as_deref() {
+                    continue;
+                }
+                if is_probable_file(&link) {
+                    discovered.push(DiscoveredLink {
+                        url: link.to_string(),
+                        depth: depth + 1,
+                        is_file: true,
+                    });
+                    continue;
+                }
+                if visited.contains(link.as_str()) || !queued.insert(link.to_string()) {
+                    continue;
+                }
+                next_wave.push((link, depth + 1));
+            }
+        }
+
+        wave = VecDeque::from(next_wave);
+    }
     Ok(discovered)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn extracts_absolute_and_relative_links() {
@@ -173,5 +216,53 @@ mod tests {
             &Url::parse("https://x.test/dir/").unwrap()
         ));
         assert!(!is_probable_file(&Url::parse("https://x.test/").unwrap()));
+    }
+
+    proptest! {
+        #[test]
+        fn extracting_arbitrary_document_never_panics(
+            html in proptest::string::string_regex(
+                r#"[a-zA-Z0-9<>/="'\-_.?#&%\s]{0,4096}"#,
+            )
+            .unwrap(),
+        ) {
+            let base = Url::parse("https://example.test/page.html").unwrap();
+            for link in extract_links(&base, &html) {
+                prop_assert!(link.scheme() == "http" || link.scheme() == "https");
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn crawling_stays_bounded_and_never_panics(
+            max_pages in 1usize..64,
+            max_depth in 0u32..3,
+        ) {
+            let options = CrawlOptions {
+                max_depth,
+                max_pages,
+                same_host_only: true,
+                extensions: Vec::new(),
+            };
+            let start = Url::parse("https://example.test/").unwrap();
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            let links = runtime.block_on(crawl(start, options, |page| {
+                async move {
+                    if page.path() == "/" {
+                        Ok(Some(
+                            "<html><a href=\"alpha.zip\"/><a href=\"beta.zip\"/></html>"
+                                .to_string(),
+                        ))
+                    } else {
+                        Ok(None)
+                    }
+                }
+            }));
+            prop_assert!(links.is_ok());
+            for link in links.ok().unwrap_or_default() {
+                prop_assert!(link.is_file || !link.url.is_empty());
+            }
+        }
     }
 }

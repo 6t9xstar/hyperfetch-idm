@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useStore } from "../store";
 import { formatBytes, formatSpeed } from "../lib/format";
 import { DownloadIcon, PulseIcon, ZapIcon } from "./Icons";
@@ -7,8 +8,14 @@ export function StatsBar() {
   const downloads = useStore((state) => state.downloads);
   const grabberTasks = useStore((state) => state.grabberTasks);
 
-  const runningGrabbers = grabberTasks.filter((task) => task.status === "running").length;
-  const totalReceived = downloads.reduce((sum, download) => sum + download.received, 0);
+  const runningGrabbers = useMemo(
+    () => grabberTasks.filter((task) => task.status === "running").length,
+    [grabberTasks],
+  );
+  const totalReceived = useMemo(
+    () => downloads.reduce((sum, download) => sum + download.received, 0),
+    [downloads],
+  );
 
   return (
     <div className="grid gap-px overflow-hidden border-b border-white/[0.06] bg-white/[0.04] sm:grid-cols-4">

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/core",
     "crates/cli",
+    "crates/native",
     "fixtures/range-server",
     "src-tauri",
 ]
@@ -14,6 +15,12 @@ license = "MIT"
 authors = ["HyperFetch Contributors"]
 repository = "https://github.com/6t9xstar/hyperfetch-idm"
 description = "HyperFetch - Open-Source Download Manager"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+strip = true
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync", "time", "net", "io-util", "signal"] }

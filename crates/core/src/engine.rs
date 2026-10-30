@@ -26,7 +26,7 @@ use crate::util::{
 };
 
 const MONITOR_INTERVAL: Duration = Duration::from_millis(500);
-const WRITE_BUFFER: usize = 1024 * 1024;
+const WRITE_BUFFER: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -114,10 +114,10 @@ impl Runtime {
         let token = CancellationToken::new();
         *self.token.lock() = token.clone();
         *self.reason.lock() = None;
-        self.progress.received.store(received, Ordering::SeqCst);
-        self.progress.total.store(total, Ordering::SeqCst);
-        self.progress.speed.store(0, Ordering::SeqCst);
-        self.progress.active_connections.store(0, Ordering::SeqCst);
+        self.progress.received.store(received, Ordering::Relaxed);
+        self.progress.total.store(total, Ordering::Relaxed);
+        self.progress.speed.store(0, Ordering::Relaxed);
+        self.progress.active_connections.store(0, Ordering::Relaxed);
         self.active.store(true, Ordering::SeqCst);
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         (token, generation)
@@ -142,8 +142,8 @@ impl Runtime {
     fn finish(&self, generation: u64) {
         if self.generation.load(Ordering::SeqCst) == generation {
             self.active.store(false, Ordering::SeqCst);
-            self.progress.speed.store(0, Ordering::SeqCst);
-            self.progress.active_connections.store(0, Ordering::SeqCst);
+            self.progress.speed.store(0, Ordering::Relaxed);
+            self.progress.active_connections.store(0, Ordering::Relaxed);
             *self.plan.lock() = None;
         }
     }
@@ -732,8 +732,8 @@ impl Engine {
 
         if changed {
             self.inner.db.clear_ranges(record.id)?;
-            self.inner.db.update_received(record.id, 0)?;
-            runtime.progress.received.store(0, Ordering::SeqCst);
+            self.inner.db.update_received_async(record.id, 0).await?;
+            runtime.progress.received.store(0, Ordering::Relaxed);
         }
 
         self.inner.db.update_meta(
@@ -745,7 +745,7 @@ impl Engine {
             probe.last_modified.as_deref(),
             probe.content_type.as_deref(),
         )?;
-        runtime.progress.total.store(total, Ordering::SeqCst);
+        runtime.progress.total.store(total, Ordering::Relaxed);
 
         let mut record = record.clone();
         record.total_size = total;
@@ -771,7 +771,7 @@ impl Engine {
                 Err(Error::RangeUnsupported) => {
                     tracing::info!(download = %record.id, "server ignored range requests; falling back to single stream");
                     reset_for_single(&self.inner.db, &record, &part_path, total).await?;
-                    runtime.progress.received.store(0, Ordering::SeqCst);
+                    runtime.progress.received.store(0, Ordering::Relaxed);
                     self.run_single(
                         &record, runtime, token, &client, &url, &headers, total, false, &part_path,
                         &settings,
@@ -847,7 +847,10 @@ impl Engine {
             .progress
             .received
             .store(initial_received, Ordering::SeqCst);
-        self.inner.db.update_received(record.id, initial_received)?;
+        self.inner
+            .db
+            .update_received_async(record.id, initial_received)
+            .await?;
 
         if plan.is_complete() {
             return Ok(());
@@ -891,7 +894,7 @@ impl Engine {
 
         while workers.join_next().await.is_some() {}
 
-        persist_plan(&ctx, true);
+        persist_plan(&ctx, true).await;
 
         if range_unsupported.load(Ordering::SeqCst) {
             return Err(Error::RangeUnsupported);
@@ -963,9 +966,12 @@ impl Engine {
             file.set_len(total).await?;
         }
 
-        runtime.progress.received.store(offset, Ordering::SeqCst);
-        runtime.progress.total.store(total, Ordering::SeqCst);
-        self.inner.db.update_received(record.id, offset)?;
+        runtime.progress.received.store(offset, Ordering::Relaxed);
+        runtime.progress.total.store(total, Ordering::Relaxed);
+        self.inner
+            .db
+            .update_received_async(record.id, offset)
+            .await?;
 
         let limiter = RateLimiter::new(record.speed_limit);
         let mut attempts = 0u32;
@@ -974,7 +980,10 @@ impl Engine {
 
         loop {
             if token.is_cancelled() {
-                self.inner.db.update_received(record.id, offset)?;
+                self.inner
+                    .db
+                    .update_received_async(record.id, offset)
+                    .await?;
                 return Err(Error::Cancelled);
             }
 
@@ -990,7 +999,7 @@ impl Engine {
 
             let response = tokio::select! {
                 _ = token.cancelled() => {
-                    self.inner.db.update_received(record.id, offset)?;
+                    self.inner.db.update_received_async(record.id, offset).await?;
                     return Err(Error::Cancelled);
                 }
                 result = request.send() => result,
@@ -1036,8 +1045,8 @@ impl Engine {
 
             if status == StatusCode::OK && offset > 0 {
                 offset = 0;
-                runtime.progress.received.store(0, Ordering::SeqCst);
-                self.inner.db.update_received(record.id, 0)?;
+                runtime.progress.received.store(0, Ordering::Relaxed);
+                self.inner.db.update_received_async(record.id, 0).await?;
                 file.set_len(0).await?;
                 continue;
             }
@@ -1054,14 +1063,20 @@ impl Engine {
 
             let mut response = response;
             let mut written = 0u64;
+            let mut flushed = 0u64;
             let mut failed: Option<String> = None;
+            let mut buffer: Vec<u8> = Vec::with_capacity(WRITE_BUFFER);
 
             loop {
                 let chunk = tokio::select! {
                     _ = token.cancelled() => {
-                        offset += written;
-                        runtime.progress.received.store(offset, Ordering::SeqCst);
-                        self.inner.db.update_received(record.id, offset)?;
+                        if let Ok(new_flushed) =
+                            flush_pending(&mut file, &mut buffer, offset, flushed).await
+                        {
+                            flushed = new_flushed;
+                        }
+                        runtime.progress.received.store(offset + written, Ordering::Relaxed);
+                        self.inner.db.update_received_async(record.id, offset + flushed).await?;
                         return Err(Error::Cancelled);
                     }
                     chunk = response.chunk() => chunk,
@@ -1076,9 +1091,18 @@ impl Engine {
                             return Err(Error::failed("server sent more data than expected"));
                         }
 
-                        file.seek(std::io::SeekFrom::Start(offset + written))
-                            .await?;
-                        file.write_all(&bytes).await?;
+                        if buffer.is_empty() && bytes.len() >= WRITE_BUFFER {
+                            file.seek(std::io::SeekFrom::Start(offset + flushed))
+                                .await?;
+                            file.write_all(&bytes).await?;
+                            flushed += bytes.len() as u64;
+                        } else {
+                            buffer.extend_from_slice(&bytes);
+                            if buffer.len() >= WRITE_BUFFER {
+                                flushed =
+                                    flush_pending(&mut file, &mut buffer, offset, flushed).await?;
+                            }
+                        }
                         written += bytes.len() as u64;
                         runtime
                             .progress
@@ -1089,7 +1113,10 @@ impl Engine {
                         limiter.acquire(bytes.len() as u64).await;
 
                         if last_persist.elapsed() >= Duration::from_secs(1) {
-                            self.inner.db.update_received(record.id, offset + written)?;
+                            self.inner
+                                .db
+                                .update_received_async(record.id, offset + flushed)
+                                .await?;
                             last_persist = Instant::now();
                         }
                     }
@@ -1101,9 +1128,20 @@ impl Engine {
                 }
             }
 
+            match flush_pending(&mut file, &mut buffer, offset, flushed).await {
+                Ok(_) => {}
+                Err(error) => {
+                    failed = failed.or_else(|| Some(format!("cannot write to disk: {error}")));
+                    written = flushed;
+                }
+            }
+
             offset += written;
-            runtime.progress.received.store(offset, Ordering::SeqCst);
-            self.inner.db.update_received(record.id, offset)?;
+            runtime.progress.received.store(offset, Ordering::Relaxed);
+            self.inner
+                .db
+                .update_received_async(record.id, offset)
+                .await?;
             last_persist = Instant::now();
 
             if let Some(error) = failed {
@@ -1113,8 +1151,8 @@ impl Engine {
                 }
                 if !accept_ranges {
                     offset = 0;
-                    runtime.progress.received.store(0, Ordering::SeqCst);
-                    self.inner.db.update_received(record.id, 0)?;
+                    runtime.progress.received.store(0, Ordering::Relaxed);
+                    self.inner.db.update_received_async(record.id, 0).await?;
                     file.set_len(0).await?;
                 }
                 sleep_backoff(attempts, token).await?;
@@ -1133,8 +1171,8 @@ impl Engine {
                 }
                 if !accept_ranges {
                     offset = 0;
-                    runtime.progress.received.store(0, Ordering::SeqCst);
-                    self.inner.db.update_received(record.id, 0)?;
+                    runtime.progress.received.store(0, Ordering::Relaxed);
+                    self.inner.db.update_received_async(record.id, 0).await?;
                     file.set_len(0).await?;
                 }
                 sleep_backoff(attempts, token).await?;
@@ -1142,7 +1180,7 @@ impl Engine {
             }
 
             if offset > 0 {
-                runtime.progress.total.store(offset, Ordering::SeqCst);
+                runtime.progress.total.store(offset, Ordering::Relaxed);
                 self.inner.db.update_meta(
                     record.id,
                     None,
@@ -1168,7 +1206,8 @@ impl Engine {
             .redirect(reqwest::redirect::Policy::limited(10))
             .pool_max_idle_per_host(64)
             .pool_idle_timeout(Duration::from_secs(90))
-            .tcp_nodelay(true);
+            .tcp_nodelay(true)
+            .http1_only();
 
         if let Some(proxy_url) = &key {
             let proxy = reqwest::Proxy::all(proxy_url).map_err(|error| {
@@ -1250,7 +1289,7 @@ impl Engine {
         let _ = self.inner.db.clear_ranges(id);
         let _ = self.inner.db.set_state(id, DownloadState::Canceled, None);
         if let Some(runtime) = self.runtime_for(id) {
-            runtime.progress.received.store(0, Ordering::SeqCst);
+            runtime.progress.received.store(0, Ordering::Relaxed);
         }
         self.emit_updated(id);
     }
@@ -1260,15 +1299,15 @@ fn build_snapshot(inner: &Inner, record: &DownloadRecord) -> DownloadSnapshot {
     let runtime = inner.runtimes.lock().get(&record.id).cloned();
     let live_received = runtime
         .as_ref()
-        .map(|runtime| runtime.progress.received.load(Ordering::SeqCst))
+        .map(|runtime| runtime.progress.received.load(Ordering::Relaxed))
         .unwrap_or(0);
     let speed = runtime
         .as_ref()
-        .map(|runtime| runtime.progress.speed.load(Ordering::SeqCst))
+        .map(|runtime| runtime.progress.speed.load(Ordering::Relaxed))
         .unwrap_or(0);
     let active_connections = runtime
         .as_ref()
-        .map(|runtime| runtime.progress.active_connections.load(Ordering::SeqCst))
+        .map(|runtime| runtime.progress.active_connections.load(Ordering::Relaxed))
         .unwrap_or(0);
 
     let received = if matches!(
@@ -1350,7 +1389,7 @@ async fn monitor_progress(
     runtime: Arc<Runtime>,
     cancel: CancellationToken,
 ) {
-    let mut last_bytes = runtime.progress.received.load(Ordering::SeqCst);
+    let mut last_bytes = runtime.progress.received.load(Ordering::Relaxed);
     let mut last_time = Instant::now();
     let mut smooth_speed = 0f64;
 
@@ -1364,7 +1403,7 @@ async fn monitor_progress(
             break;
         }
 
-        let bytes = runtime.progress.received.load(Ordering::SeqCst);
+        let bytes = runtime.progress.received.load(Ordering::Relaxed);
         let now = Instant::now();
         let elapsed = now.duration_since(last_time).as_secs_f64();
         if elapsed > 0.0 {
@@ -1382,8 +1421,8 @@ async fn monitor_progress(
         last_bytes = bytes;
         last_time = now;
 
-        let total = runtime.progress.total.load(Ordering::SeqCst);
-        let speed = runtime.progress.speed.load(Ordering::SeqCst);
+        let total = runtime.progress.total.load(Ordering::Relaxed);
+        let speed = runtime.progress.speed.load(Ordering::Relaxed);
         let eta_secs = if speed > 0 && total > bytes {
             Some((total - bytes) / speed)
         } else {
@@ -1397,7 +1436,7 @@ async fn monitor_progress(
                 total,
                 speed,
                 eta_secs,
-                active_connections: runtime.progress.active_connections.load(Ordering::SeqCst),
+                active_connections: runtime.progress.active_connections.load(Ordering::Relaxed),
             },
         });
     }
@@ -1510,7 +1549,7 @@ async fn segmented_worker(ctx: SegmentedContext) {
             Ok(()) => {
                 ctx.plan.lock().commit(job, true);
                 if ctx.persist.due() {
-                    persist_plan(&ctx, false);
+                    persist_plan(&ctx, false).await;
                 }
                 ctx.notify.notify_waiters();
             }
@@ -1636,7 +1675,7 @@ async fn stream_batch_once(
     loop {
         let chunk = tokio::select! {
             _ = ctx.token.cancelled() => {
-                ctx.progress.received.fetch_sub(written, Ordering::SeqCst);
+                ctx.progress.received.fetch_sub(written, Ordering::Relaxed);
                 return Err(BatchFailure::Aborted);
             }
             chunk = response.chunk() => chunk,
@@ -1649,13 +1688,31 @@ async fn stream_batch_once(
                 }
 
                 if written + bytes.len() as u64 > job.len() {
-                    ctx.progress.received.fetch_sub(written, Ordering::SeqCst);
+                    ctx.progress.received.fetch_sub(written, Ordering::Relaxed);
                     return Err(BatchFailure::Fatal(
                         "server sent more data than requested".into(),
                     ));
                 }
 
-                buffer.extend_from_slice(&bytes);
+                if buffer.is_empty() && bytes.len() >= WRITE_BUFFER {
+                    if let Err(error) = file.write_all(&bytes).await {
+                        ctx.progress.received.fetch_sub(written, Ordering::Relaxed);
+                        return Err(BatchFailure::Retryable(format!(
+                            "cannot write to disk: {error}"
+                        )));
+                    }
+                } else {
+                    buffer.extend_from_slice(&bytes);
+                    if buffer.len() >= WRITE_BUFFER {
+                        if let Err(error) = file.write_all(&buffer).await {
+                            ctx.progress.received.fetch_sub(written, Ordering::Relaxed);
+                            return Err(BatchFailure::Retryable(format!(
+                                "cannot write to disk: {error}"
+                            )));
+                        }
+                        buffer.clear();
+                    }
+                }
                 written += bytes.len() as u64;
                 ctx.progress
                     .received
@@ -1664,30 +1721,20 @@ async fn stream_batch_once(
                 ctx.global_limiter.acquire(bytes.len() as u64).await;
                 ctx.limiter.acquire(bytes.len() as u64).await;
 
-                if buffer.len() >= WRITE_BUFFER {
-                    if let Err(error) = file.write_all(&buffer).await {
-                        ctx.progress.received.fetch_sub(written, Ordering::SeqCst);
-                        return Err(BatchFailure::Retryable(format!(
-                            "cannot write to disk: {error}"
-                        )));
-                    }
-                    buffer.clear();
-                }
-
                 if written >= job.len() {
                     break;
                 }
             }
             Ok(None) => break,
             Err(error) => {
-                ctx.progress.received.fetch_sub(written, Ordering::SeqCst);
+                ctx.progress.received.fetch_sub(written, Ordering::Relaxed);
                 return Err(BatchFailure::Retryable(format!("network error: {error}")));
             }
         }
     }
 
     if written != job.len() {
-        ctx.progress.received.fetch_sub(written, Ordering::SeqCst);
+        ctx.progress.received.fetch_sub(written, Ordering::Relaxed);
         return Err(BatchFailure::Retryable(format!(
             "short response ({} of {} bytes)",
             written,
@@ -1696,7 +1743,7 @@ async fn stream_batch_once(
     }
 
     if let Err(error) = file.write_all(&buffer).await {
-        ctx.progress.received.fetch_sub(written, Ordering::SeqCst);
+        ctx.progress.received.fetch_sub(written, Ordering::Relaxed);
         return Err(BatchFailure::Retryable(format!(
             "cannot write to disk: {error}"
         )));
@@ -1705,7 +1752,7 @@ async fn stream_batch_once(
     Ok(())
 }
 
-fn persist_plan(ctx: &SegmentedContext, force: bool) {
+async fn persist_plan(ctx: &SegmentedContext, force: bool) {
     if !force && !ctx.persist.due() {
         return;
     }
@@ -1714,8 +1761,8 @@ fn persist_plan(ctx: &SegmentedContext, force: bool) {
         .iter()
         .map(|(start, _end, pos)| pos.saturating_sub(*start))
         .sum();
-    let _ = ctx.db.save_ranges(ctx.id, &snapshot);
-    let _ = ctx.db.update_received(ctx.id, received);
+    let _ = ctx.db.save_ranges_async(ctx.id, snapshot).await;
+    let _ = ctx.db.update_received_async(ctx.id, received).await;
 }
 
 fn plan_rows_valid(rows: &[(u64, u64, u64)], total: u64) -> bool {
@@ -1760,6 +1807,22 @@ async fn prepare_part(path: &Path, total: u64, truncate: bool) -> Result<()> {
     Ok(())
 }
 
+async fn flush_pending(
+    file: &mut tokio::fs::File,
+    buffer: &mut Vec<u8>,
+    base: u64,
+    flushed: u64,
+) -> std::io::Result<u64> {
+    if buffer.is_empty() {
+        return Ok(flushed);
+    }
+    file.seek(std::io::SeekFrom::Start(base + flushed)).await?;
+    file.write_all(buffer).await?;
+    let new_flushed = flushed + buffer.len() as u64;
+    buffer.clear();
+    Ok(new_flushed)
+}
+
 async fn reset_for_single(
     db: &Arc<Db>,
     record: &DownloadRecord,
@@ -1767,7 +1830,7 @@ async fn reset_for_single(
     total: u64,
 ) -> Result<()> {
     db.clear_ranges(record.id)?;
-    db.update_received(record.id, 0)?;
+    db.update_received_async(record.id, 0).await?;
     prepare_part(part_path, total, true).await?;
     Ok(())
 }
@@ -1823,7 +1886,7 @@ async fn finalize_download(
         .progress
         .received
         .store(final_size, Ordering::SeqCst);
-    runtime.progress.total.store(final_size, Ordering::SeqCst);
+    runtime.progress.total.store(final_size, Ordering::Relaxed);
 
     inner.db.update_meta(
         record.id,
@@ -1868,8 +1931,8 @@ async fn sha256_file(path: &Path) -> Result<String> {
 }
 
 fn backoff_delay(attempt: u32) -> Duration {
-    let exponent = attempt.min(5);
-    let base = 300u64.saturating_mul(1u64 << exponent).min(8_000);
+    let exponent = attempt.min(7);
+    let base = 60u64.saturating_mul(1u64 << exponent).min(8_000);
     let jitter = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| (duration.subsec_nanos() as u64) % 250)

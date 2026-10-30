@@ -1,4 +1,12 @@
-import { useEffect, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
+import { memo } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { matchesFilter, useStore } from "../../store";
 import type { DownloadSnapshot } from "../../lib/types";
@@ -46,6 +54,82 @@ interface MenuEntry {
   disabled?: boolean;
 }
 
+interface ClassicRowProps {
+  download: DownloadSnapshot;
+  isSelected: boolean;
+  onSelect: (download: DownloadSnapshot) => void;
+  onRowDoubleClick: (download: DownloadSnapshot) => void;
+  onRowMenu: (event: ReactMouseEvent, download: DownloadSnapshot) => void;
+}
+
+const ClassicRow = memo(function ClassicRow({
+  download,
+  isSelected,
+  onSelect,
+  onRowDoubleClick,
+  onRowMenu,
+}: ClassicRowProps) {
+  const active = isActive(download.state);
+  const percent = Math.round(progressOf(download) * 100);
+  const category = categoryOfFilename(download.filename);
+  const eta = active && download.eta_secs != null ? formatEta(download.eta_secs) : "—";
+  const addedDate = new Date(download.created_at).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+
+  return (
+    <tr
+      className={isSelected ? "is-selected" : ""}
+      onClick={() => onSelect(download)}
+      onDoubleClick={() => onRowDoubleClick(download)}
+      onContextMenu={(event) => onRowMenu(event, download)}
+    >
+      <td>
+        <div className="classic-file">
+          <CategoryIcon category={category} className="h-4 w-4 shrink-0" />
+          <div className="min-w-0">
+            <span className="classic-file-name" title={download.filename}>
+              {download.filename || "Resolving filename…"}
+            </span>
+            <span className="classic-file-domain">
+              {domainOf(download.url)}
+              {download.accept_ranges ? " · Multi" : ""}
+            </span>
+          </div>
+        </div>
+      </td>
+      <td>
+        <span className={`classic-state state-${download.state}`}>
+          {STATE_LABEL[download.state]}
+        </span>
+      </td>
+      <td className="is-number">
+        {download.total_size ? formatBytes(download.total_size) : "—"}
+      </td>
+      <td>
+        <div className="classic-progress-cell">
+          <div className="classic-progress">
+            <span
+              className={`classic-progress-fill state-${download.state} ${
+                download.state === "probing" || download.state === "completing"
+                  ? "is-indeterminate"
+                  : ""
+              }`}
+              style={{ width: `${Math.max(percent, 2)}%` }}
+            />
+          </div>
+          <span className="classic-percent">{formatPercent(download)}</span>
+        </div>
+      </td>
+      <td className="is-number">{active ? formatSpeed(download.speed) : "—"}</td>
+      <td className="is-number">{eta}</td>
+      <td className="capitalize">{category}</td>
+      <td className="text-[11px] text-slate-500">{addedDate}</td>
+    </tr>
+  );
+});
+
 export function ClassicShell() {
   const downloads = useStore((state) => state.downloads);
   const filter = useStore((state) => state.filter);
@@ -87,43 +171,90 @@ export function ClassicShell() {
     return () => window.removeEventListener("click", close);
   }, []);
 
-  const normalized = search.trim().toLowerCase();
-  const visible = downloads.filter((download) => {
-    if (!matchesFilter(download, filter)) return false;
-    if (!normalized) return true;
-    return (
-      download.filename.toLowerCase().includes(normalized) ||
-      download.url.toLowerCase().includes(normalized)
-    );
-  });
+  const visible = useMemo(() => {
+    const normalized = search.trim().toLowerCase();
+    return downloads.filter((download) => {
+      if (!matchesFilter(download, filter)) return false;
+      if (!normalized) return true;
+      return (
+        download.filename.toLowerCase().includes(normalized) ||
+        download.url.toLowerCase().includes(normalized)
+      );
+    });
+  }, [downloads, filter, search]);
 
   const selectedDownload = downloads.find((download) => download.id === selected) ?? null;
-  const totalReceived = downloads.reduce((sum, download) => sum + download.received, 0);
 
-  const openFile = (download: DownloadSnapshot) => {
-    void api
-      .openPath(`${download.dir}/${download.filename}`)
-      .catch((error) => notify(String(error), "error"));
-  };
-
-  const openFolder = (download: DownloadSnapshot) => {
-    void api.openFolder(download.dir).catch((error) => notify(String(error), "error"));
-  };
-
-  const copyLink = (download: DownloadSnapshot) => {
-    void navigator.clipboard
-      .writeText(download.url)
-      .then(() => notify("Link copied to clipboard", "success"))
-      .catch((error) => notify(String(error), "error"));
-  };
-
-  const handleRowDoubleClick = (download: DownloadSnapshot) => {
-    if (download.state === "done") {
-      openFile(download);
-    } else {
-      openProgressDialog(download.id);
+  const counts = useMemo(() => {
+    const categories: Record<string, number> = {};
+    let paused = 0;
+    let done = 0;
+    let failed = 0;
+    let received = 0;
+    for (const download of downloads) {
+      const category = categoryOfFilename(download.filename);
+      categories[category] = (categories[category] ?? 0) + 1;
+      if (download.state === "paused") paused += 1;
+      if (download.state === "done") done += 1;
+      if (download.state === "error" || download.state === "canceled") failed += 1;
+      received += download.received;
     }
-  };
+    return { categories, paused, done, failed, received };
+  }, [downloads]);
+
+  const openFile = useCallback(
+    (download: DownloadSnapshot) => {
+      void api
+        .openPath(`${download.dir}/${download.filename}`)
+        .catch((error) => notify(String(error), "error"));
+    },
+    [notify],
+  );
+
+  const openFolder = useCallback(
+    (download: DownloadSnapshot) => {
+      void api.openFolder(download.dir).catch((error) => notify(String(error), "error"));
+    },
+    [notify],
+  );
+
+  const copyLink = useCallback(
+    (download: DownloadSnapshot) => {
+      void navigator.clipboard
+        .writeText(download.url)
+        .then(() => notify("Link copied to clipboard", "success"))
+        .catch((error) => notify(String(error), "error"));
+    },
+    [notify],
+  );
+
+  const handleRowDoubleClick = useCallback(
+    (download: DownloadSnapshot) => {
+      if (download.state === "done") {
+        openFile(download);
+      } else {
+        openProgressDialog(download.id);
+      }
+    },
+    [notify, openProgressDialog],
+  );
+
+  const handleRowSelect = useCallback((download: DownloadSnapshot) => {
+    setSelected(download.id);
+  }, []);
+
+  const handleRowMenu = useCallback(
+    (event: ReactMouseEvent, download: DownloadSnapshot) => {
+      event.preventDefault();
+      setSelected(download.id);
+      setContext({
+        x: Math.min(event.clientX, window.innerWidth - 240),
+        y: Math.min(event.clientY, window.innerHeight - 300),
+        download,
+      });
+    },
+    [],
+  );
 
   const menus: { label: string; entries: MenuEntry[] }[] = [
     {
@@ -213,16 +344,6 @@ export function ClassicShell() {
     const value = quickUrl.trim();
     openAdd(value || undefined);
     setQuickUrl("");
-  };
-
-  const rowMenu = (event: ReactMouseEvent, download: DownloadSnapshot) => {
-    event.preventDefault();
-    setSelected(download.id);
-    setContext({
-      x: Math.min(event.clientX, window.innerWidth - 240),
-      y: Math.min(event.clientY, window.innerHeight - 300),
-      download,
-    });
   };
 
   return (
@@ -433,7 +554,7 @@ export function ClassicShell() {
                 <ArchiveIcon className="h-3.5 w-3.5 text-amber-600" />
                 <span>Compressed</span>
                 <span className="classic-tree-badge">
-                  ({downloads.filter((d) => categoryOfFilename(d.filename) === "archives").length})
+                  ({counts.categories.archives ?? 0})
                 </span>
               </button>
               <button
@@ -443,7 +564,7 @@ export function ClassicShell() {
                 <FileIcon className="h-3.5 w-3.5 text-blue-600" />
                 <span>Documents</span>
                 <span className="classic-tree-badge">
-                  ({downloads.filter((d) => categoryOfFilename(d.filename) === "documents").length})
+                  ({counts.categories.documents ?? 0})
                 </span>
               </button>
               <button
@@ -453,7 +574,7 @@ export function ClassicShell() {
                 <MusicIcon className="h-3.5 w-3.5 text-rose-500" />
                 <span>Music</span>
                 <span className="classic-tree-badge">
-                  ({downloads.filter((d) => categoryOfFilename(d.filename) === "audio").length})
+                  ({counts.categories.audio ?? 0})
                 </span>
               </button>
               <button
@@ -463,7 +584,7 @@ export function ClassicShell() {
                 <ProgramIcon className="h-3.5 w-3.5 text-emerald-600" />
                 <span>Programs</span>
                 <span className="classic-tree-badge">
-                  ({downloads.filter((d) => categoryOfFilename(d.filename) === "programs").length})
+                  ({counts.categories.programs ?? 0})
                 </span>
               </button>
               <button
@@ -473,7 +594,7 @@ export function ClassicShell() {
                 <FilmIcon className="h-3.5 w-3.5 text-purple-600" />
                 <span>Video</span>
                 <span className="classic-tree-badge">
-                  ({downloads.filter((d) => categoryOfFilename(d.filename) === "video").length})
+                  ({counts.categories.video ?? 0})
                 </span>
               </button>
               <button
@@ -483,7 +604,7 @@ export function ClassicShell() {
                 <ImageIcon className="h-3.5 w-3.5 text-teal-600" />
                 <span>Images</span>
                 <span className="classic-tree-badge">
-                  ({downloads.filter((d) => categoryOfFilename(d.filename) === "images").length})
+                  ({counts.categories.images ?? 0})
                 </span>
               </button>
             </div>
@@ -537,7 +658,7 @@ export function ClassicShell() {
                 <PauseIcon className="h-3.5 w-3.5 text-amber-600" />
                 <span>Paused</span>
                 <span className="classic-tree-badge">
-                  ({downloads.filter((d) => d.state === "paused").length})
+                  ({counts.paused})
                 </span>
               </button>
               <button
@@ -547,7 +668,7 @@ export function ClassicShell() {
                 <CheckIcon className="h-3.5 w-3.5 text-emerald-600" />
                 <span>Finished</span>
                 <span className="classic-tree-badge">
-                  ({downloads.filter((d) => d.state === "done").length})
+                  ({counts.done})
                 </span>
               </button>
               <button
@@ -557,7 +678,7 @@ export function ClassicShell() {
                 <TrashIcon className="h-3.5 w-3.5 text-rose-600" />
                 <span>Failed</span>
                 <span className="classic-tree-badge">
-                  ({downloads.filter((d) => d.state === "error" || d.state === "canceled").length})
+                  ({counts.failed})
                 </span>
               </button>
             </div>
@@ -602,69 +723,16 @@ export function ClassicShell() {
                     </td>
                   </tr>
                 ) : (
-                  visible.map((download) => {
-                    const active = isActive(download.state);
-                    const percent = Math.round(progressOf(download) * 100);
-                    const category = categoryOfFilename(download.filename);
-                    const eta =
-                      active && download.eta_secs != null ? formatEta(download.eta_secs) : "—";
-                    const addedDate = new Date(download.created_at).toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                    });
-
-                    return (
-                      <tr
-                        key={download.id}
-                        className={selected === download.id ? "is-selected" : ""}
-                        onClick={() => setSelected(download.id)}
-                        onDoubleClick={() => handleRowDoubleClick(download)}
-                        onContextMenu={(event) => rowMenu(event, download)}
-                      >
-                        <td>
-                          <div className="classic-file">
-                            <CategoryIcon category={category} className="h-4 w-4 shrink-0" />
-                            <div className="min-w-0">
-                              <span className="classic-file-name" title={download.filename}>
-                                {download.filename || "Resolving filename…"}
-                              </span>
-                              <span className="classic-file-domain">
-                                {domainOf(download.url)}
-                                {download.accept_ranges ? " · Multi" : ""}
-                              </span>
-                            </div>
-                          </div>
-                        </td>
-                        <td>
-                          <span className={`classic-state state-${download.state}`}>
-                            {STATE_LABEL[download.state]}
-                          </span>
-                        </td>
-                        <td className="is-number">
-                          {download.total_size ? formatBytes(download.total_size) : "—"}
-                        </td>
-                        <td>
-                          <div className="classic-progress-cell">
-                            <div className="classic-progress">
-                              <span
-                                className={`classic-progress-fill state-${download.state} ${
-                                  download.state === "probing" || download.state === "completing"
-                                    ? "is-indeterminate"
-                                    : ""
-                                }`}
-                                style={{ width: `${Math.max(percent, 2)}%` }}
-                              />
-                            </div>
-                            <span className="classic-percent">{formatPercent(download)}</span>
-                          </div>
-                        </td>
-                        <td className="is-number">{active ? formatSpeed(download.speed) : "—"}</td>
-                        <td className="is-number">{eta}</td>
-                        <td className="capitalize">{category}</td>
-                        <td className="text-[11px] text-slate-500">{addedDate}</td>
-                      </tr>
-                    );
-                  })
+                  visible.map((download) => (
+                    <ClassicRow
+                      key={download.id}
+                      download={download}
+                      isSelected={selected === download.id}
+                      onSelect={handleRowSelect}
+                      onRowDoubleClick={handleRowDoubleClick}
+                      onRowMenu={handleRowMenu}
+                    />
+                  ))
                 )}
               </tbody>
             </table>
@@ -684,7 +752,7 @@ export function ClassicShell() {
         <span>Active: {stats.active}</span>
         <span>Queued: {stats.queued}</span>
         <span className="classic-status-grow" />
-        <span>Total Received: {formatBytes(totalReceived)}</span>
+        <span>Total Received: {formatBytes(counts.received)}</span>
         <span>HyperFetch 10x Turbo Engine</span>
       </div>
 

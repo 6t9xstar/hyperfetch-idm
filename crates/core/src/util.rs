@@ -201,6 +201,7 @@ pub fn validators_differ(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn sanitizes_windows_reserved_names() {
@@ -228,5 +229,22 @@ mod tests {
         assert_eq!(filename_from_url(&url), Some("My Video.mp4".to_string()));
         let url = Url::parse("https://example.com/").unwrap();
         assert_eq!(filename_from_url(&url), None);
+    }
+
+    proptest! {
+        #[test]
+        fn content_disposition_never_panics(
+            header in proptest::string::string_regex(
+                r#"[A-Za-z0-9;=\\'"%*.\-]{0,512}"#,
+            )
+            .unwrap(),
+        ) {
+            if let Some(filename) = filename_from_content_disposition(&header) {
+                prop_assert!(!filename.is_empty());
+                prop_assert!(!filename.contains('\\'));
+                prop_assert!(!filename.contains('/'));
+                prop_assert!(!filename.contains(':'));
+            }
+        }
     }
 }

@@ -1,4 +1,5 @@
 import type { MouseEvent } from "react";
+import { memo, useMemo } from "react";
 import { matchesFilter, useStore } from "../store";
 import type { DownloadSnapshot } from "../lib/types";
 import {
@@ -39,7 +40,7 @@ const BAR_COLOR: Record<string, string> = {
   queued: "bg-slate-600",
 };
 
-function DownloadRow({ download }: { download: DownloadSnapshot }) {
+const DownloadRow = memo(function DownloadRow({ download }: { download: DownloadSnapshot }) {
   const pause = useStore((state) => state.pause);
   const resume = useStore((state) => state.resume);
   const cancel = useStore((state) => state.cancel);
@@ -213,7 +214,7 @@ function DownloadRow({ download }: { download: DownloadSnapshot }) {
       </div>
     </div>
   );
-}
+});
 
 function EmptyState() {
   const filter = useStore((state) => state.filter);
@@ -248,15 +249,17 @@ export function DownloadTable() {
   const filter = useStore((state) => state.filter);
   const search = useStore((state) => state.search);
 
-  const normalized = search.trim().toLowerCase();
-  const visible = downloads.filter((download) => {
-    if (!matchesFilter(download, filter)) return false;
-    if (!normalized) return true;
-    return (
-      download.filename.toLowerCase().includes(normalized) ||
-      download.url.toLowerCase().includes(normalized)
-    );
-  });
+  const visible = useMemo(() => {
+    const normalized = search.trim().toLowerCase();
+    return downloads.filter((download) => {
+      if (!matchesFilter(download, filter)) return false;
+      if (!normalized) return true;
+      return (
+        download.filename.toLowerCase().includes(normalized) ||
+        download.url.toLowerCase().includes(normalized)
+      );
+    });
+  }, [downloads, filter, search]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

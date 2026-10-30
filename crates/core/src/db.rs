@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS settings (
 "#;
 
 pub struct Db {
-    conn: Mutex<Connection>,
+    conn: Arc<Mutex<Connection>>,
 }
 
 impl Db {
@@ -79,7 +79,7 @@ impl Db {
         conn.execute_batch(SCHEMA)?;
 
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
         })
     }
 
@@ -88,7 +88,7 @@ impl Db {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
         })
     }
 
@@ -240,6 +240,20 @@ impl Db {
         Ok(())
     }
 
+    pub async fn update_received_async(&self, id: Uuid, received: u64) -> Result<()> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().expect("database mutex poisoned");
+            conn.execute(
+                "UPDATE downloads SET received = ?2, updated_at = ?3 WHERE id = ?1",
+                params![id.to_string(), received as i64, now_ms()],
+            )?;
+            Ok(())
+        })
+        .await
+        .map_err(|error| crate::error::Error::failed(format!("database task aborted: {error}")))?
+    }
+
     pub fn finish(
         &self,
         id: Uuid,
@@ -285,25 +299,62 @@ impl Db {
     }
 
     pub fn save_ranges(&self, id: Uuid, ranges: &[(u64, u64, u64)]) -> Result<()> {
-        let mut conn = self.conn.lock().expect("database mutex poisoned");
+        Self::save_ranges_blocking(&self.conn, id, ranges)
+    }
+
+    pub async fn save_ranges_async(&self, id: Uuid, ranges: Vec<(u64, u64, u64)>) -> Result<()> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || Self::save_ranges_blocking(&conn, id, &ranges))
+            .await
+            .map_err(|error| {
+                crate::error::Error::failed(format!("database task aborted: {error}"))
+            })?
+    }
+
+    fn save_ranges_blocking(
+        conn: &Mutex<Connection>,
+        id: Uuid,
+        ranges: &[(u64, u64, u64)],
+    ) -> Result<()> {
+        let id_text = id.to_string();
+        let mut conn = conn.lock().expect("database mutex poisoned");
         let transaction = conn.transaction()?;
-        transaction.execute(
-            "DELETE FROM ranges WHERE download_id = ?1",
-            params![id.to_string()],
+        transaction.execute_batch(
+            "CREATE TEMP TABLE IF NOT EXISTS ranges_snapshot (
+                 start INTEGER NOT NULL,
+                 end   INTEGER NOT NULL,
+                 pos   INTEGER NOT NULL
+             );
+             DELETE FROM ranges_snapshot;",
         )?;
         {
-            let mut insert = transaction.prepare(
-                "INSERT INTO ranges (download_id, start, end, pos) VALUES (?1, ?2, ?3, ?4)",
+            let mut stage = transaction.prepare_cached(
+                "INSERT INTO ranges_snapshot (start, end, pos) VALUES (?1, ?2, ?3)",
             )?;
             for (start, end, pos) in ranges {
-                insert.execute(params![
-                    id.to_string(),
-                    *start as i64,
-                    *end as i64,
-                    *pos as i64
-                ])?;
+                stage.execute(params![*start as i64, *end as i64, *pos as i64])?;
             }
         }
+        transaction.execute(
+            "DELETE FROM ranges
+             WHERE download_id = ?1
+               AND NOT EXISTS (
+                   SELECT 1 FROM ranges_snapshot s WHERE s.start = ranges.start
+               )",
+            params![id_text],
+        )?;
+        transaction.execute(
+            r#"
+            INSERT INTO ranges (download_id, start, end, pos)
+            SELECT ?1, s.start, s.end, s.pos FROM ranges_snapshot s
+            WHERE true
+            ON CONFLICT(download_id, start) DO UPDATE SET
+                end = excluded.end,
+                pos = excluded.pos
+            "#,
+            params![id_text],
+        )?;
+        transaction.execute_batch("DELETE FROM ranges_snapshot;")?;
         transaction.commit()?;
         Ok(())
     }
@@ -455,6 +506,37 @@ mod tests {
 
         db.delete_download(record.id).unwrap();
         assert!(db.get_download(record.id).unwrap().is_none());
+        assert!(db.load_ranges(record.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn save_ranges_upserts_and_prunes_stale_rows() {
+        let db = Db::open_in_memory().unwrap();
+        let record = sample_record();
+        db.insert_download(&record).unwrap();
+
+        db.save_ranges(record.id, &[(0, 512, 128), (512, 1024, 512)])
+            .unwrap();
+        let ranges = db.load_ranges(record.id).unwrap();
+        assert_eq!(ranges, vec![(0, 512, 128), (512, 1024, 512)]);
+
+        db.save_ranges(record.id, &[(0, 512, 300), (512, 1024, 600)])
+            .unwrap();
+        let ranges = db.load_ranges(record.id).unwrap();
+        assert_eq!(ranges, vec![(0, 512, 300), (512, 1024, 600)]);
+
+        db.save_ranges(
+            record.id,
+            &[(0, 341, 100), (341, 682, 341), (682, 1024, 682)],
+        )
+        .unwrap();
+        let ranges = db.load_ranges(record.id).unwrap();
+        assert_eq!(
+            ranges,
+            vec![(0, 341, 100), (341, 682, 341), (682, 1024, 682)]
+        );
+
+        db.save_ranges(record.id, &[]).unwrap();
         assert!(db.load_ranges(record.id).unwrap().is_empty());
     }
 

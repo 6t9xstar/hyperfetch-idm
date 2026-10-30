@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { matchesFilter, useStore } from "../store";
 import type { Filter } from "../lib/types";
 import {
@@ -47,11 +48,31 @@ export function Sidebar() {
   const bridge = useStore((state) => state.bridge);
   const setSettingsOpen = useStore((state) => state.setSettingsOpen);
   const grabberTasks = useStore((state) => state.grabberTasks);
-  const runningGrabbers = grabberTasks.filter((task) => task.status === "running").length;
+  const runningGrabbers = useMemo(
+    () => grabberTasks.filter((task) => task.status === "running").length,
+    [grabberTasks],
+  );
+
+  const countByFilter = useMemo(() => {
+    const counts = new Map<Filter, number>();
+    for (const download of downloads) {
+      for (const item of MAIN) {
+        if (matchesFilter(download, item.key)) {
+          counts.set(item.key, (counts.get(item.key) ?? 0) + 1);
+        }
+      }
+      for (const item of CATEGORIES) {
+        if (matchesFilter(download, item.key)) {
+          counts.set(item.key, (counts.get(item.key) ?? 0) + 1);
+        }
+      }
+    }
+    return counts;
+  }, [downloads]);
 
   const renderItem = (item: NavItem) => {
     const Icon = item.icon;
-    const count = downloads.filter((download) => matchesFilter(download, item.key)).length;
+    const count = countByFilter.get(item.key) ?? 0;
     const active = filter === item.key;
     return (
       <button
