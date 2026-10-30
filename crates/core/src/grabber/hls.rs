@@ -391,18 +391,6 @@ fn decrypt_segment(data: &[u8], key: &[u8], iv: &[u8; 16]) -> Result<Vec<u8>> {
     if data.is_empty() {
         return Ok(Vec::new());
     }
-    #[cfg(feature = "native-accel")]
-    {
-        if key.len() == 16 {
-            if let Some(decrypted) = hyperfetch_native::decrypt_aes128_cbc_padded(
-                key.try_into().expect("checked 16-byte key"),
-                iv,
-                data,
-            ) {
-                return Ok(decrypted);
-            }
-        }
-    }
     let mut buffer = data.to_vec();
     let decrypted = Aes128CbcDec::new_from_slices(key, iv)
         .map_err(|error| Error::failed(format!("invalid AES key/IV: {error}")))?

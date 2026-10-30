@@ -22,12 +22,10 @@ jobs:
           workspaces: ". -> target"
       - name: Formatting
         run: cargo fmt --all --check
-      - name: Clippy (engine, cli, native, fixtures)
-        run: cargo clippy -p hyperfetch-core -p hyperfetch-cli -p hyperfetch-native -p hyperfetch-fixture --all-targets -- -D warnings
+      - name: Clippy (engine, cli, fixtures)
+        run: cargo clippy -p hyperfetch-core -p hyperfetch-cli -p hyperfetch-fixture --all-targets -- -D warnings
       - name: Tests
         run: cargo test -p hyperfetch-core
-      - name: Native kernel tests
-        run: cargo test -p hyperfetch-native
       - name: Check Tauri backend
         run: cargo check -p hyperfetch-app
       - name: Tauri helper tests

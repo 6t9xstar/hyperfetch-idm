@@ -3,7 +3,6 @@ resolver = "2"
 members = [
     "crates/core",
     "crates/cli",
-    "crates/native",
     "fixtures/range-server",
     "src-tauri",
 ]

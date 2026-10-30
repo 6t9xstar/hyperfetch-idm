@@ -2121,7 +2121,6 @@ dependencies = [
  "cbc",
  "futures-util",
  "hex",
- "hyperfetch-native",
  "parking_lot",
  "percent-encoding",
  "proptest",
@@ -2151,17 +2150,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "hyperfetch-native"
-version = "0.1.1"
-dependencies = [
- "aes",
- "cbc",
- "cc",
- "hex",
- "sha2",
 ]
 
 [[package]]

@@ -25,11 +25,12 @@ parking_lot.workspace = true
 regex.workspace = true
 aes = "0.8"
 cbc = "0.1"
-hyperfetch-native = { path = "../native", optional = true }
+# hyperfetch-native is intentionally NOT wired: the benchmark gate showed
+# RustCrypto's aes crate (VAES/pipelined) is ~2.5x faster than an AES-NI
+# serial C kernel on modern hardware. See scripts/native-gate history.
 
 [features]
 default = []
-native-accel = ["dep:hyperfetch-native"]
 
 [dev-dependencies]
 tempfile.workspace = true
